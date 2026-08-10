@@ -114,15 +114,27 @@ async function attachPdfToActiveChat() {
 
   await ensureContentScript(tab.id);
 
+  const arrayBuffer = base64ToArrayBuffer(pdf.base64);
   const response = await chrome.tabs.sendMessage(tab.id, {
     type: "attach-pdf",
     filename: pdf.filename || PDF_FILENAME,
+    arrayBuffer,
+    // Keep base64 as a compact fallback if structured-clone drops the buffer.
     base64: pdf.base64
   });
 
   if (!response?.ok) {
     throw new Error(response?.error || "Could not attach PDF to this chat.");
   }
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
 }
 
 async function findLatestPdfDownload() {

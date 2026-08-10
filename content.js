@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = 3;
+  const CONTENT_SCRIPT_VERSION = 4;
 
   if (globalThis.__scdContentVersion === CONTENT_SCRIPT_VERSION) {
     return;
@@ -8,10 +8,21 @@
   if (globalThis.__scdOnMessage) {
     chrome.runtime.onMessage.removeListener(globalThis.__scdOnMessage);
   }
+  if (globalThis.__scdKeydownGuard) {
+    document.removeEventListener("keydown", globalThis.__scdKeydownGuard, true);
+  }
+  if (globalThis.__scdPasteGuard) {
+    document.removeEventListener("paste", globalThis.__scdPasteGuard, true);
+  }
 
   globalThis.__scdContentVersion = CONTENT_SCRIPT_VERSION;
   globalThis.__scdOnMessage = handleMessage;
+  globalThis.__scdKeydownGuard = handleAttachShortcutKeydown;
+  globalThis.__scdPasteGuard = handleAttachShortcutPaste;
+
   chrome.runtime.onMessage.addListener(handleMessage);
+  document.addEventListener("keydown", handleAttachShortcutKeydown, true);
+  document.addEventListener("paste", handleAttachShortcutPaste, true);
 
   function handleMessage(message, _sender, sendResponse) {
     if (message?.type === "ping") {
@@ -31,50 +42,83 @@
     return false;
   }
 
-  async function attachPdfToChat({ base64, filename }) {
-    if (!base64) {
-      throw new Error("Missing PDF data.");
+  function handleAttachShortcutKeydown(event) {
+    if (!isAttachShortcut(event) || !detectPlatform()) {
+      return;
     }
+    // Stop browser "paste without formatting" / page paste handlers on Ctrl/Cmd+Shift+V.
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  }
 
+  function handleAttachShortcutPaste(event) {
+    if (!detectPlatform()) {
+      return;
+    }
+    // Only block Shift+paste (Ctrl/Cmd+Shift+V). Normal Ctrl/Cmd+V must still work.
+    if (!event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  }
+
+  function isAttachShortcut(event) {
+    const key = event.key || "";
+    const code = event.code || "";
+    const isV = key === "v" || key === "V" || code === "KeyV";
+    return Boolean(isV && event.shiftKey && (event.ctrlKey || event.metaKey));
+  }
+
+  async function attachPdfToChat({ base64, arrayBuffer, filename }) {
     const platform = detectPlatform();
     if (!platform) {
       throw new Error("Unsupported page. Use ChatGPT, Claude, or Gemini.");
     }
 
-    // Close stray media/preview overlays so hotkeys don't re-open them.
-    dismissPreviewOverlays();
-
     const pdfName = filename || "ai_screen_capture.pdf";
-    const blobData = base64ToBlob(base64, "application/pdf");
-    const file = new File([blobData], pdfName, {
+    const buffer = resolveArrayBuffer(arrayBuffer, base64);
+    if (!buffer) {
+      throw new Error("Missing PDF data.");
+    }
+
+    const file = new File([buffer], pdfName, {
       type: "application/pdf",
       lastModified: Date.now()
     });
 
-    const fileInput = findFileInput(platform);
-    let attached = false;
-
-    if (fileInput) {
-      attached = assignFileToInput(fileInput, file);
+    // 1) Click the site's attachment / upload control first.
+    const attachButton = findAttachmentButton(platform);
+    if (attachButton) {
+      attachButton.click();
     }
 
-    if (!attached) {
-      const openedNativeDialog = openNativeUploadFallback(platform, fileInput);
-      focusChatComposer(platform);
-
-      if (!openedNativeDialog) {
-        throw new Error(
-          "Could not attach the PDF automatically. Click Upload/Add and choose ai_screen_capture.pdf from Downloads."
-        );
-      }
-
-      showToast("Choose ai_screen_capture.pdf in the file dialog…");
-      return { fallback: true };
+    // 2) Locate the file input tied to that control (wait briefly if the menu mounts it).
+    const fileInput = await waitForRelatedFileInput(platform, attachButton, 1200);
+    if (!fileInput) {
+      throw new Error("Could not find a file upload control on this chat page.");
     }
 
+    // 3) Programmatic assign via DataTransfer.
+    const attached = assignFileToInput(fileInput, file);
     focusChatComposer(platform);
-    showToast("PDF Successfully Attached!");
-    return { fallback: false };
+
+    if (attached) {
+      showToast("PDF Successfully Attached!");
+      return { fallback: false };
+    }
+
+    // 4) Fallback: open the native file dialog for one-click selection (no clipboard paste).
+    try {
+      fileInput.click();
+    } catch (_error) {
+      // If click is blocked, the earlier button click may already have opened a picker.
+    }
+
+    showToast("Choose ai_screen_capture.pdf in the file dialog…");
+    return { fallback: true };
   }
 
   function detectPlatform() {
@@ -91,185 +135,78 @@
     return null;
   }
 
-  function base64ToBlob(base64, mimeType) {
+  function resolveArrayBuffer(arrayBuffer, base64) {
+    if (arrayBuffer instanceof ArrayBuffer) {
+      return arrayBuffer;
+    }
+    if (arrayBuffer?.buffer instanceof ArrayBuffer) {
+      return arrayBuffer.buffer;
+    }
+    if (Array.isArray(arrayBuffer)) {
+      return Uint8Array.from(arrayBuffer).buffer;
+    }
+    if (typeof base64 === "string" && base64) {
+      return base64ToArrayBuffer(base64);
+    }
+    return null;
+  }
+
+  function base64ToArrayBuffer(base64) {
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return new Blob([bytes], { type: mimeType });
+    return bytes.buffer;
   }
 
-  function findFileInput(platform) {
-    if (platform === "gemini") {
-      const geminiInput =
-        document.querySelector("uploader-file-picker input[type='file']") ||
-        document.querySelector("uploader-file-upload input[type='file']") ||
-        document.querySelector("uploader-file-picker")?.querySelector?.("input[type='file']") ||
-        queryComposerFileInputs().find((input) => !isImageOnlyInput(input)) ||
-        document.querySelector('input[type="file"]:not([accept*="image" i])') ||
-        document.querySelector('input[type="file"]');
-
-      if (geminiInput && !isImageOnlyInput(geminiInput)) {
-        return geminiInput;
-      }
-    }
-
-    if (platform === "chatgpt") {
-      const chatgptInput =
-        queryComposerFileInputs().find((input) => acceptsPdf(input)) ||
-        document.querySelector('input[type="file"][accept*="pdf" i]') ||
-        document.querySelector('form input[type="file"]') ||
-        queryComposerFileInputs().find((input) => !isImageOnlyInput(input));
-
-      if (chatgptInput && !isImageOnlyInput(chatgptInput)) {
-        return chatgptInput;
-      }
-    }
-
-    const ranked = Array.from(document.querySelectorAll('input[type="file"]'))
-      .filter((input) => !isImageOnlyInput(input))
-      .map((input, index) => ({ input, index, score: scoreFileInput(input, platform) }))
-      .sort((a, b) => b.score - a.score || b.index - a.index);
-
-    return ranked[0]?.input || null;
-  }
-
-  function queryComposerFileInputs() {
-    const roots = [
-      document.querySelector("uploader-file-picker"),
-      document.querySelector("form[data-type='unified-composer']"),
-      document.querySelector('[data-testid="composer"]'),
-      document.querySelector("form.stretch"),
-      document.querySelector("main form"),
-      document.querySelector("main"),
-      document.body
-    ].filter(Boolean);
-
-    const seen = new Set();
-    const inputs = [];
-    for (const root of roots) {
-      for (const input of root.querySelectorAll('input[type="file"]')) {
-        if (!seen.has(input)) {
-          seen.add(input);
-          inputs.push(input);
-        }
-      }
-    }
-    return inputs;
-  }
-
-  function acceptsPdf(input) {
-    const accept = (input.getAttribute("accept") || "").toLowerCase();
-    return !accept || accept.includes("pdf") || accept.includes(".pdf") || accept.includes("*/*");
-  }
-
-  function isImageOnlyInput(input) {
-    const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
-    if (!accept) {
-      return false;
-    }
-    const hasPdf = accept.includes("pdf") || accept.includes(".pdf") || accept.includes("*/*");
-    const hasImage = accept.includes("image") || accept.includes(".png") || accept.includes(".jpg");
-    return hasImage && !hasPdf;
-  }
-
-  function scoreFileInput(input, platform) {
-    const accept = (input.getAttribute("accept") || "").toLowerCase();
-    let score = 0;
-
-    if (acceptsPdf(input)) {
-      score += 6;
-    }
-    if (isImageOnlyInput(input)) {
-      score -= 20;
-    }
-    if (!input.disabled) {
-      score += 2;
-    }
-    if (platform === "gemini" && input.closest("uploader-file-picker, uploader-file-upload")) {
-      score += 10;
-    }
-    if (platform === "chatgpt" && input.closest("form")) {
-      score += 4;
-    }
-    return score;
-  }
-
-  function assignFileToInput(fileInput, file) {
-    try {
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      fileInput.files = dataTransfer.files;
-
-      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
-      fileInput.dispatchEvent(new Event("input", { bubbles: true }));
-
-      const assigned = fileInput.files && fileInput.files.length > 0;
-      const matchesName = assigned && fileInput.files[0].name === file.name;
-      const matchesType =
-        assigned &&
-        (fileInput.files[0].type === "application/pdf" || fileInput.files[0].name.endsWith(".pdf"));
-
-      return Boolean(assigned && matchesName && matchesType);
-    } catch (error) {
-      console.warn("Programmatic file attach failed:", error);
-      return false;
-    }
-  }
-
-  function openNativeUploadFallback(platform, fileInput) {
-    // Prefer a real upload/add control — avoid preview / gallery buttons.
-    const uploadButton = findUploadFallbackButton(platform);
-    if (uploadButton) {
-      uploadButton.click();
-      return true;
-    }
-
-    // Last resort: click the file input itself to open the native picker.
-    if (fileInput) {
-      try {
-        fileInput.click();
-        return true;
-      } catch (_error) {
-        return false;
-      }
-    }
-
-    return false;
-  }
-
-  function findUploadFallbackButton(platform) {
+  function findAttachmentButton(platform) {
     const selectorsByPlatform = {
+      gemini: [
+        'button[aria-label*="Upload files" i]',
+        'button[aria-label*="Upload file" i]',
+        'button[aria-label*="Upload" i]',
+        'button[aria-label*="Add files" i]',
+        'button[aria-label*="Add" i]',
+        "uploader-file-picker button",
+        "uploader-file-picker",
+        "uploader-file-upload button",
+        'button[aria-label*="Open upload file picker" i]',
+        'button[aria-label*="Insert" i]'
+      ],
       chatgpt: [
+        'button[aria-label*="Attach" i]',
         'button[aria-label*="Upload" i]',
         'button[aria-label*="Add photos & files" i]',
         'button[aria-label*="Add files" i]',
-        'button[aria-label*="Attach" i]',
         'button[data-testid="composer-plus-btn"]'
       ],
       claude: [
+        'button[aria-label*="Attach" i]',
         'button[aria-label*="Upload" i]',
-        'button[aria-label*="Add" i]',
-        'button[aria-label*="Attach" i]'
-      ],
-      gemini: [
-        'button[aria-label*="Upload" i]',
-        'button[aria-label*="Add" i]',
-        'button[aria-label*="Open upload file" i]',
-        'button[aria-label*="Insert" i]',
-        "uploader-file-picker button",
-        "uploader-file-upload button"
+        'button[aria-label*="Add files" i]'
       ]
     };
 
     for (const selector of selectorsByPlatform[platform] || []) {
       const el = document.querySelector(selector);
-      if (el && isLikelyUploadControl(el)) {
-        return el;
+      if (!el || !isLikelyUploadControl(el)) {
+        continue;
       }
+      // Prefer a clickable child button when the match is a custom element wrapper.
+      if (el.tagName && el.tagName.includes("-") && !/BUTTON|SUMMARY/i.test(el.tagName)) {
+        const nestedButton = el.querySelector("button, [role='button']");
+        if (nestedButton && isLikelyUploadControl(nestedButton)) {
+          return nestedButton;
+        }
+      }
+      return el;
     }
 
+    return findGenericUploadButton();
+  }
+
+  function findGenericUploadButton() {
     const candidates = Array.from(
       document.querySelectorAll("button, div[role='button'], [role='button']")
     );
@@ -278,12 +215,10 @@
         const label = getControlLabel(el);
         return (
           (label.includes("upload") ||
+            label.includes("attach") ||
             label.includes("add files") ||
-            label.includes("add photos & files") ||
-            label.includes("attach")) &&
-          !label.includes("preview") &&
-          !label.includes("gallery") &&
-          !label.includes("view image")
+            label.includes("add photos & files")) &&
+          isLikelyUploadControl(el)
         );
       }) || null
     );
@@ -298,7 +233,9 @@
       label.includes("preview") ||
       label.includes("gallery") ||
       label.includes("view image") ||
-      label.includes("previous")
+      label.includes("previous") ||
+      label.includes("next image") ||
+      label.includes("open image")
     );
   }
 
@@ -315,25 +252,136 @@
       .trim();
   }
 
+  async function waitForRelatedFileInput(platform, attachButton, timeoutMs) {
+    const existing = findRelatedFileInput(platform, attachButton);
+    if (existing) {
+      return existing;
+    }
+
+    return new Promise((resolve) => {
+      const observer = new MutationObserver(() => {
+        const input = findRelatedFileInput(platform, attachButton);
+        if (input) {
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(input);
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        resolve(findRelatedFileInput(platform, attachButton));
+      }, timeoutMs);
+    });
+  }
+
+  function findRelatedFileInput(platform, attachButton) {
+    const scopes = [];
+
+    if (attachButton) {
+      scopes.push(
+        attachButton.closest("uploader-file-picker"),
+        attachButton.closest("uploader-file-upload"),
+        attachButton.closest("label"),
+        attachButton.closest("form"),
+        attachButton.parentElement,
+        attachButton
+      );
+    }
+
+    if (platform === "gemini") {
+      scopes.push(
+        document.querySelector("uploader-file-picker"),
+        document.querySelector("uploader-file-upload")
+      );
+    }
+
+    scopes.push(
+      document.querySelector("form[data-type='unified-composer']"),
+      document.querySelector('[data-testid="composer"]'),
+      document.querySelector("main form"),
+      document.body
+    );
+
+    for (const scope of scopes.filter(Boolean)) {
+      const input =
+        scope.matches?.('input[type="file"]')
+          ? scope
+          : scope.querySelector?.('input[type="file"]');
+      if (input && !isImageOnlyInput(input)) {
+        return input;
+      }
+    }
+
+    // Gemini: direct known picker input.
+    if (platform === "gemini") {
+      const geminiInput =
+        document.querySelector("uploader-file-picker input[type='file']") ||
+        document.querySelector("uploader-file-upload input[type='file']") ||
+        document.querySelector('input[type="file"]');
+      if (geminiInput && !isImageOnlyInput(geminiInput)) {
+        return geminiInput;
+      }
+    }
+
+    return (
+      Array.from(document.querySelectorAll('input[type="file"]')).find(
+        (input) => !isImageOnlyInput(input)
+      ) || null
+    );
+  }
+
+  function isImageOnlyInput(input) {
+    const accept = (input.getAttribute("accept") || "").toLowerCase().trim();
+    if (!accept) {
+      return false;
+    }
+    const hasPdf = accept.includes("pdf") || accept.includes(".pdf") || accept.includes("*/*");
+    const hasImage = accept.includes("image") || accept.includes(".png") || accept.includes(".jpg");
+    return hasImage && !hasPdf;
+  }
+
+  function assignFileToInput(fileInput, file) {
+    try {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      fileInput.files = dataTransfer.files;
+
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+      fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+      return Boolean(
+        fileInput.files &&
+          fileInput.files.length > 0 &&
+          fileInput.files[0].name === file.name
+      );
+    } catch (error) {
+      console.warn("Programmatic file attach failed:", error);
+      return false;
+    }
+  }
+
   function focusChatComposer(platform) {
     const selectors = {
       chatgpt: [
         "#prompt-textarea",
         'div[contenteditable="true"]#prompt-textarea',
-        'div[contenteditable="true"][data-placeholder]',
-        'textarea[name="prompt-textarea"]',
-        'div[contenteditable="true"]'
+        'div[contenteditable="true"]',
+        "textarea"
       ],
       claude: [
         'div[contenteditable="true"].ProseMirror',
         'div[contenteditable="true"]',
-        "fieldset textarea",
         "textarea"
       ],
       gemini: [
-        'div[contenteditable="true"][aria-label*="prompt" i]',
-        'div[contenteditable="true"][aria-label*="Enter" i]',
         'rich-textarea div[contenteditable="true"]',
+        'div[contenteditable="true"][aria-label*="prompt" i]',
         'div[contenteditable="true"]',
         "textarea"
       ]
@@ -353,35 +401,6 @@
           return;
         } catch (_innerError) {
           // Try next selector.
-        }
-      }
-    }
-  }
-
-  function dismissPreviewOverlays() {
-    const escapeEvent = new KeyboardEvent("keydown", {
-      key: "Escape",
-      code: "Escape",
-      keyCode: 27,
-      which: 27,
-      bubbles: true,
-      cancelable: true
-    });
-    document.activeElement?.dispatchEvent?.(escapeEvent);
-    document.dispatchEvent(escapeEvent);
-
-    const closeButtons = Array.from(
-      document.querySelectorAll(
-        'button[aria-label*="Close" i], button[aria-label*="Dismiss" i], [data-testid="close-button"]'
-      )
-    ).slice(0, 3);
-
-    for (const button of closeButtons) {
-      const label = getControlLabel(button);
-      if (label.includes("close") || label.includes("dismiss")) {
-        // Avoid closing the whole chat — only click obvious lightbox/modal closers.
-        if (button.closest('[role="dialog"], [aria-modal="true"], lightbox, .modal')) {
-          button.click();
         }
       }
     }
