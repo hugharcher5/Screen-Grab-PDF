@@ -1,11 +1,28 @@
-const COMMAND_ID = "capture-pdf-to-downloads";
+const CAPTURE_COMMAND = "capture-pdf-to-downloads";
+const ATTACH_COMMAND = "attach-pdf-to-chat";
 const PDF_FILENAME = "ai_screen_capture.pdf";
 const DEBUGGER_VERSION = "1.3";
+const STORAGE_KEY = "lastCapturedPdf";
+const AI_HOST_PATTERNS = [
+  /^https:\/\/chatgpt\.com\//i,
+  /^https:\/\/claude\.ai\//i,
+  /^https:\/\/gemini\.google\.com\//i
+];
+
+/** In-memory cache for the current service-worker lifetime. */
+let lastPdfCache = null;
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command === COMMAND_ID) {
+  if (command === CAPTURE_COMMAND) {
     captureActiveTabAsPdf().catch((error) => {
       console.error("PDF capture failed:", error);
+    });
+    return;
+  }
+
+  if (command === ATTACH_COMMAND) {
+    attachPdfToActiveChat().catch((error) => {
+      console.error("PDF attach failed:", error);
     });
   }
 });
@@ -20,6 +37,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
     return true;
   }
+
+  if (message?.type === "attach-pdf-now") {
+    attachPdfToActiveChat()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => {
+        console.error("PDF attach failed:", error);
+        sendResponse({ ok: false, error: error?.message || String(error) });
+      });
+    return true;
+  }
+
   return false;
 });
 
@@ -57,12 +85,152 @@ async function captureActiveTabAsPdf() {
       saveAs: false
     });
 
-    await showSavedToast(tab.id);
+    await storeCapturedPdf(result.data, PDF_FILENAME);
+    await showToast(tab.id, "PDF Saved to Downloads!");
   } finally {
     if (attached) {
       await detachDebugger(debuggee);
     }
   }
+}
+
+async function attachPdfToActiveChat() {
+  const tab = await getActiveTab();
+  if (!tab?.id) {
+    throw new Error("No active tab found.");
+  }
+  if (!isSupportedAiChatUrl(tab.url)) {
+    throw new Error("Open a ChatGPT, Claude, or Gemini chat tab first.");
+  }
+
+  const downloadItem = await findLatestPdfDownload();
+  const pdf = await resolvePdfBytes(downloadItem);
+
+  if (!pdf?.base64) {
+    throw new Error("No captured PDF found. Press Ctrl+Shift+C (Cmd+Shift+C on Mac) first.");
+  }
+
+  await ensureContentScript(tab.id);
+
+  const response = await chrome.tabs.sendMessage(tab.id, {
+    type: "attach-pdf",
+    filename: pdf.filename || PDF_FILENAME,
+    base64: pdf.base64
+  });
+
+  if (!response?.ok) {
+    throw new Error(response?.error || "Could not attach PDF to this chat.");
+  }
+}
+
+async function findLatestPdfDownload() {
+  const named = await chrome.downloads.search({
+    filenameRegex: "(^|[/\\\\])ai_screen_capture\\.pdf$",
+    state: "complete",
+    exists: true,
+    orderBy: ["-startTime"],
+    limit: 1
+  });
+  if (named[0]) {
+    return named[0];
+  }
+
+  const recentPdf = await chrome.downloads.search({
+    mime: "application/pdf",
+    state: "complete",
+    exists: true,
+    orderBy: ["-startTime"],
+    limit: 1
+  });
+  return recentPdf[0] || null;
+}
+
+/**
+ * Chrome extensions cannot read arbitrary files from the Downloads folder path.
+ * We resolve the latest download metadata, then load PDF bytes from:
+ * 1) in-memory / extension storage cache written during capture
+ * 2) the download item's original data: URL, when Chrome still exposes it
+ */
+async function resolvePdfBytes(downloadItem) {
+  const cached = await loadCapturedPdf();
+  if (cached?.base64) {
+    return {
+      base64: cached.base64,
+      filename: basename(downloadItem?.filename) || cached.filename || PDF_FILENAME
+    };
+  }
+
+  const url = downloadItem?.url || "";
+  if (url.startsWith("data:application/pdf;base64,")) {
+    return {
+      base64: url.slice("data:application/pdf;base64,".length),
+      filename: basename(downloadItem.filename) || PDF_FILENAME
+    };
+  }
+
+  return null;
+}
+
+async function storeCapturedPdf(base64, filename) {
+  lastPdfCache = {
+    base64,
+    filename,
+    savedAt: Date.now()
+  };
+
+  try {
+    await chrome.storage.session.set({ [STORAGE_KEY]: lastPdfCache });
+  } catch (error) {
+    console.warn("Could not cache PDF in session storage:", error);
+  }
+
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEY]: lastPdfCache });
+  } catch (error) {
+    console.warn("Could not cache PDF in local storage (file may be large):", error);
+  }
+}
+
+async function loadCapturedPdf() {
+  if (lastPdfCache?.base64) {
+    return lastPdfCache;
+  }
+
+  try {
+    const session = await chrome.storage.session.get(STORAGE_KEY);
+    if (session[STORAGE_KEY]?.base64) {
+      lastPdfCache = session[STORAGE_KEY];
+      return lastPdfCache;
+    }
+  } catch (error) {
+    console.warn("Could not read session PDF cache:", error);
+  }
+
+  try {
+    const local = await chrome.storage.local.get(STORAGE_KEY);
+    if (local[STORAGE_KEY]?.base64) {
+      lastPdfCache = local[STORAGE_KEY];
+      return lastPdfCache;
+    }
+  } catch (error) {
+    console.warn("Could not read local PDF cache:", error);
+  }
+
+  return null;
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "ping" });
+    return;
+  } catch (_error) {
+    // Content script not ready yet — inject it.
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content.js"]
+  });
 }
 
 function getActiveTab() {
@@ -71,6 +239,18 @@ function getActiveTab() {
 
 function isHttpUrl(url) {
   return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
+}
+
+function isSupportedAiChatUrl(url) {
+  return typeof url === "string" && AI_HOST_PATTERNS.some((pattern) => pattern.test(url));
+}
+
+function basename(path) {
+  if (!path || typeof path !== "string") {
+    return "";
+  }
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || "";
 }
 
 function attachDebugger(debuggee) {
@@ -88,25 +268,25 @@ function attachDebugger(debuggee) {
 function detachDebugger(debuggee) {
   return new Promise((resolve) => {
     chrome.debugger.detach(debuggee, () => {
-      // Ignore "not attached" and similar cleanup races.
       void chrome.runtime.lastError;
       resolve();
     });
   });
 }
 
-async function showSavedToast(tabId) {
+async function showToast(tabId, message) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: injectToast
+      func: injectToast,
+      args: [message]
     });
   } catch (error) {
     console.warn("Could not show toast on page:", error);
   }
 }
 
-function injectToast() {
+function injectToast(message) {
   const existing = document.getElementById("scd-pdf-toast");
   if (existing) {
     existing.remove();
@@ -114,7 +294,7 @@ function injectToast() {
 
   const toast = document.createElement("div");
   toast.id = "scd-pdf-toast";
-  toast.textContent = "PDF Saved to Downloads!";
+  toast.textContent = message;
   Object.assign(toast.style, {
     position: "fixed",
     top: "16px",

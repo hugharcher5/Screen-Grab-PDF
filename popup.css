@@ -58,25 +58,41 @@ body {
 .hotkey {
   margin: 0;
   display: inline-block;
-  padding: 6px 10px;
+  padding: 2px 7px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
+  white-space: nowrap;
 }
 
-.hint {
-  margin: 10px 0 0;
+.steps {
+  margin: 0;
+  padding-left: 18px;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.55;
   color: var(--muted);
 }
 
-.hint code {
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: 11px;
-  color: var(--ink);
+.steps li {
+  margin: 0 0 8px;
+}
+
+.steps li:last-child {
+  margin-bottom: 0;
+}
+
+.button-secondary {
+  margin-top: 8px;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.button-secondary:hover {
+  filter: none;
+  background: rgba(15, 106, 86, 0.08);
 }
 
 .link {
