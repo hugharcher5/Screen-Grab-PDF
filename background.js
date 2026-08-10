@@ -56,8 +56,10 @@ async function captureActiveTabAsPdf() {
   if (!tab?.id) {
     throw new Error("No active tab found.");
   }
-  if (!isHttpUrl(tab.url)) {
-    throw new Error("This page cannot be captured. Open a normal website tab first.");
+  if (isBlockedCaptureUrl(tab.url) || !isHttpUrl(tab.url)) {
+    throw new Error(
+      "Cannot capture Chrome internal pages. Please switch to a regular website tab (https://) and try again."
+    );
   }
 
   const debuggee = { tabId: tab.id };
@@ -233,6 +235,20 @@ function getActiveTab() {
 
 function isHttpUrl(url) {
   return typeof url === "string" && (url.startsWith("http://") || url.startsWith("https://"));
+}
+
+function isBlockedCaptureUrl(url) {
+  if (typeof url !== "string" || !url) {
+    return true;
+  }
+
+  return (
+    url.startsWith("chrome://") ||
+    url.startsWith("chrome-extension://") ||
+    url.startsWith("edge://") ||
+    url.startsWith("about:") ||
+    url.startsWith("https://chrome.google.com/webstore")
+  );
 }
 
 function isSupportedAiChatUrl(url) {
