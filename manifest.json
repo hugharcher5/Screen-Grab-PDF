@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Screen Capture to Downloads",
+  "version": "1.0.0",
+  "description": "Save the active tab as a PDF straight to your Downloads folder.",
+  "permissions": ["activeTab", "scripting", "downloads", "debugger"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Screen Capture to Downloads"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "capture-pdf-to-downloads": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+C",
+        "mac": "Command+Shift+C"
+      },
+      "description": "Save active tab as PDF directly to Downloads"
+    }
+  }
+}

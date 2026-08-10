@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Screen Capture to Downloads</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="header">
+        <h1>Screen Capture to Downloads</h1>
+        <p class="version">Version <span id="version">1.0.0</span></p>
+      </header>
+
+      <section class="section">
+        <h2>Keyboard shortcut</h2>
+        <p class="hotkey" id="hotkey">Ctrl+Shift+C</p>
+        <p class="hint">
+          Saves the active tab as <code>ai_screen_capture.pdf</code> in your Downloads folder.
+        </p>
+        <a id="shortcuts-link" href="#" class="link">Change shortcut in Chrome…</a>
+      </section>
+
+      <section class="section">
+        <button id="capture-btn" type="button" class="button">Capture Page as PDF Now</button>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
