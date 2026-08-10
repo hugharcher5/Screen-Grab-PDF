@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = 5;
+  const CONTENT_SCRIPT_VERSION = 6;
 
   if (globalThis.__scdContentVersion === CONTENT_SCRIPT_VERSION) {
     return;
@@ -83,38 +83,80 @@
   }
 
   async function triggerGeminiPicker() {
-    const button = queryFirst([
-      'button[aria-label*="Upload files" i]',
-      'button[aria-label*="Upload file" i]',
-      'button[aria-label*="Upload" i]',
-      'button[aria-label*="Add files" i]',
-      'button[aria-label*="Add" i]',
-      "uploader-file-picker button",
-      "uploader-file-upload button"
-    ]);
-
-    if (button) {
-      button.click();
-    } else {
-      const picker = document.querySelector("uploader-file-picker");
-      if (picker) {
-        const nested = picker.querySelector("button, [role='button']") || picker;
-        nested.click();
-      }
+    // Click the hidden file input directly — do not click parent button wrappers
+    // (those open image/menu UI instead of the OS file dialog).
+    const input = findGeminiFileInput();
+    if (!input) {
+      return false;
     }
 
-    const input = await waitForFileInput(800, () =>
+    input.click();
+    return true;
+  }
+
+  function findGeminiFileInput() {
+    const preferred =
       document.querySelector("uploader-file-picker input[type='file']") ||
       document.querySelector("uploader-file-upload input[type='file']") ||
-      document.querySelector('input[type="file"]')
-    );
+      queryFileInputInShadowHosts([
+        "uploader-file-picker",
+        "uploader-file-upload",
+        "file-upload",
+        "input-container"
+      ]);
 
-    if (input) {
-      input.click();
-      return true;
+    if (preferred) {
+      return preferred;
     }
 
-    return Boolean(button || document.querySelector("uploader-file-picker"));
+    const single = document.querySelector('input[type="file"]');
+    if (single) {
+      return single;
+    }
+
+    const all = document.querySelectorAll('input[type="file"]');
+    if (all.length > 0) {
+      return all[0];
+    }
+
+    return queryDeepFileInput(document);
+  }
+
+  function queryFileInputInShadowHosts(selectors) {
+    for (const selector of selectors) {
+      for (const host of document.querySelectorAll(selector)) {
+        const input =
+          host.querySelector?.('input[type="file"]') ||
+          host.shadowRoot?.querySelector('input[type="file"]') ||
+          queryDeepFileInput(host.shadowRoot || host);
+        if (input) {
+          return input;
+        }
+      }
+    }
+    return null;
+  }
+
+  function queryDeepFileInput(root) {
+    if (!root) {
+      return null;
+    }
+
+    const direct = root.querySelector?.('input[type="file"]');
+    if (direct) {
+      return direct;
+    }
+
+    const allElements = root.querySelectorAll?.("*") || [];
+    for (const el of allElements) {
+      if (el.shadowRoot) {
+        const nested = queryDeepFileInput(el.shadowRoot);
+        if (nested) {
+          return nested;
+        }
+      }
+    }
+    return null;
   }
 
   async function triggerChatGptPicker() {
