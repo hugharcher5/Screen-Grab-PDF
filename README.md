@@ -34,7 +34,7 @@ You can also run both actions from the extension popup buttons.
 ## How to verify
 
 - After capture: check Downloads for `ai_screen_capture.pdf` (each capture overwrites the previous file).
-- After attach: the chat composer should show the attached PDF, and a toast should say **PDF Attached to Active Chat!**
+- After attach: the chat composer should show the attached PDF, and a toast should say **PDF Successfully Attached!**
 
 ## Change shortcuts
 
@@ -59,8 +59,10 @@ You can also run both actions from the extension popup buttons.
 2. Looks up the latest `ai_screen_capture.pdf` (or newest PDF) via `chrome.downloads.search`.
 3. Loads the PDF bytes from the capture cache (Chrome extensions cannot read arbitrary files from the Downloads disk path).
 4. Sends the PDF to `content.js`, which finds the page’s `input[type="file"]` (clicking an Attach/Upload control first if needed).
-5. Builds a `File` via `DataTransfer`, assigns it to the input, and dispatches `input`/`change` events so the chat UI picks it up.
-6. Shows toast: **PDF Attached to Active Chat!**
+5. Builds a PDF `File` (`type: "application/pdf"`) via `DataTransfer`, assigns it to the composer file input (Gemini: `uploader-file-picker`), and dispatches bubbling `change`/`input` events.
+6. Focuses the chat composer so media preview overlays are less likely to steal focus.
+7. Shows toast: **PDF Successfully Attached!**
+8. If the page blocks programmatic file assignment, falls back to clicking an Upload/Add control (or the file input) so the native file dialog opens.
 
 ## Project files
 

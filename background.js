@@ -220,13 +220,7 @@ async function loadCapturedPdf() {
 }
 
 async function ensureContentScript(tabId) {
-  try {
-    await chrome.tabs.sendMessage(tabId, { type: "ping" });
-    return;
-  } catch (_error) {
-    // Content script not ready yet — inject it.
-  }
-
+  // Always re-inject so attach-logic updates replace a stale content.js in the tab.
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["content.js"]

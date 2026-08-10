@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Screen Capture to Downloads",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Save the active tab as a PDF and attach it to ChatGPT, Claude, or Gemini.",
   "permissions": ["activeTab", "scripting", "downloads", "debugger", "storage"],
   "host_permissions": [
