@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Screen Capture to Downloads",
-  "version": "1.1.2",
-  "description": "Save the active tab as a PDF and attach it to ChatGPT, Claude, or Gemini.",
-  "permissions": ["activeTab", "scripting", "downloads", "debugger", "storage"],
+  "version": "1.2.0",
+  "description": "Save the active tab as a PDF and open the AI chat file picker to attach it.",
+  "permissions": ["activeTab", "scripting", "downloads", "debugger"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://claude.ai/*",
@@ -37,10 +37,10 @@
     },
     "attach-pdf-to-chat": {
       "suggested_key": {
-        "default": "Ctrl+Shift+V",
-        "mac": "Command+Shift+V"
+        "default": "Ctrl+Shift+A",
+        "mac": "Command+Shift+A"
       },
-      "description": "Attach latest captured PDF to active AI chat window"
+      "description": "Open file picker to attach PDF on active AI chat"
     }
   }
 }

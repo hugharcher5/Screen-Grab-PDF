@@ -2,15 +2,11 @@ const CAPTURE_COMMAND = "capture-pdf-to-downloads";
 const ATTACH_COMMAND = "attach-pdf-to-chat";
 const PDF_FILENAME = "ai_screen_capture.pdf";
 const DEBUGGER_VERSION = "1.3";
-const STORAGE_KEY = "lastCapturedPdf";
 const AI_HOST_PATTERNS = [
   /^https:\/\/chatgpt\.com\//i,
   /^https:\/\/claude\.ai\//i,
   /^https:\/\/gemini\.google\.com\//i
 ];
-
-/** In-memory cache for the current service-worker lifetime. */
-let lastPdfCache = null;
 
 chrome.commands.onCommand.addListener((command) => {
   if (command === CAPTURE_COMMAND) {
@@ -21,8 +17,8 @@ chrome.commands.onCommand.addListener((command) => {
   }
 
   if (command === ATTACH_COMMAND) {
-    attachPdfToActiveChat().catch((error) => {
-      console.error("PDF attach failed:", error);
+    openFilePickerOnActiveChat().catch((error) => {
+      console.error("File picker open failed:", error);
     });
   }
 });
@@ -39,10 +35,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === "attach-pdf-now") {
-    attachPdfToActiveChat()
+    openFilePickerOnActiveChat()
       .then(() => sendResponse({ ok: true }))
       .catch((error) => {
-        console.error("PDF attach failed:", error);
+        console.error("File picker open failed:", error);
         sendResponse({ ok: false, error: error?.message || String(error) });
       });
     return true;
@@ -87,7 +83,6 @@ async function captureActiveTabAsPdf() {
       saveAs: false
     });
 
-    await storeCapturedPdf(result.data, PDF_FILENAME);
     await showToast(tab.id, "PDF Saved to Downloads!");
   } finally {
     if (attached) {
@@ -96,7 +91,11 @@ async function captureActiveTabAsPdf() {
   }
 }
 
-async function attachPdfToActiveChat() {
+/**
+ * Phase 2: open the site's native OS file dialog so the user can
+ * press Enter on ai_screen_capture.pdf. No DOM image/blob scraping.
+ */
+async function openFilePickerOnActiveChat() {
   const tab = await getActiveTab();
   if (!tab?.id) {
     throw new Error("No active tab found.");
@@ -105,136 +104,18 @@ async function attachPdfToActiveChat() {
     throw new Error("Open a ChatGPT, Claude, or Gemini chat tab first.");
   }
 
-  const downloadItem = await findLatestPdfDownload();
-  const pdf = await resolvePdfBytes(downloadItem);
-
-  if (!pdf?.base64) {
-    throw new Error("No captured PDF found. Press Ctrl+Shift+C (Cmd+Shift+C on Mac) first.");
-  }
-
   await ensureContentScript(tab.id);
 
-  const arrayBuffer = base64ToArrayBuffer(pdf.base64);
   const response = await chrome.tabs.sendMessage(tab.id, {
-    type: "attach-pdf",
-    filename: pdf.filename || PDF_FILENAME,
-    arrayBuffer,
-    // Keep base64 as a compact fallback if structured-clone drops the buffer.
-    base64: pdf.base64
+    type: "open-file-picker"
   });
 
   if (!response?.ok) {
-    throw new Error(response?.error || "Could not attach PDF to this chat.");
+    throw new Error(response?.error || "Could not open the file picker.");
   }
-}
-
-function base64ToArrayBuffer(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-async function findLatestPdfDownload() {
-  const named = await chrome.downloads.search({
-    filenameRegex: "(^|[/\\\\])ai_screen_capture\\.pdf$",
-    state: "complete",
-    exists: true,
-    orderBy: ["-startTime"],
-    limit: 1
-  });
-  if (named[0]) {
-    return named[0];
-  }
-
-  const recentPdf = await chrome.downloads.search({
-    mime: "application/pdf",
-    state: "complete",
-    exists: true,
-    orderBy: ["-startTime"],
-    limit: 1
-  });
-  return recentPdf[0] || null;
-}
-
-/**
- * Chrome extensions cannot read arbitrary files from the Downloads folder path.
- * We resolve the latest download metadata, then load PDF bytes from:
- * 1) in-memory / extension storage cache written during capture
- * 2) the download item's original data: URL, when Chrome still exposes it
- */
-async function resolvePdfBytes(downloadItem) {
-  const cached = await loadCapturedPdf();
-  if (cached?.base64) {
-    return {
-      base64: cached.base64,
-      filename: basename(downloadItem?.filename) || cached.filename || PDF_FILENAME
-    };
-  }
-
-  const url = downloadItem?.url || "";
-  if (url.startsWith("data:application/pdf;base64,")) {
-    return {
-      base64: url.slice("data:application/pdf;base64,".length),
-      filename: basename(downloadItem.filename) || PDF_FILENAME
-    };
-  }
-
-  return null;
-}
-
-async function storeCapturedPdf(base64, filename) {
-  lastPdfCache = {
-    base64,
-    filename,
-    savedAt: Date.now()
-  };
-
-  try {
-    await chrome.storage.session.set({ [STORAGE_KEY]: lastPdfCache });
-  } catch (error) {
-    console.warn("Could not cache PDF in session storage:", error);
-  }
-
-  try {
-    await chrome.storage.local.set({ [STORAGE_KEY]: lastPdfCache });
-  } catch (error) {
-    console.warn("Could not cache PDF in local storage (file may be large):", error);
-  }
-}
-
-async function loadCapturedPdf() {
-  if (lastPdfCache?.base64) {
-    return lastPdfCache;
-  }
-
-  try {
-    const session = await chrome.storage.session.get(STORAGE_KEY);
-    if (session[STORAGE_KEY]?.base64) {
-      lastPdfCache = session[STORAGE_KEY];
-      return lastPdfCache;
-    }
-  } catch (error) {
-    console.warn("Could not read session PDF cache:", error);
-  }
-
-  try {
-    const local = await chrome.storage.local.get(STORAGE_KEY);
-    if (local[STORAGE_KEY]?.base64) {
-      lastPdfCache = local[STORAGE_KEY];
-      return lastPdfCache;
-    }
-  } catch (error) {
-    console.warn("Could not read local PDF cache:", error);
-  }
-
-  return null;
 }
 
 async function ensureContentScript(tabId) {
-  // Always re-inject so attach-logic updates replace a stale content.js in the tab.
   await chrome.scripting.executeScript({
     target: { tabId },
     files: ["content.js"]
@@ -265,14 +146,6 @@ function isBlockedCaptureUrl(url) {
 
 function isSupportedAiChatUrl(url) {
   return typeof url === "string" && AI_HOST_PATTERNS.some((pattern) => pattern.test(url));
-}
-
-function basename(path) {
-  if (!path || typeof path !== "string") {
-    return "";
-  }
-  const parts = path.split(/[/\\]/);
-  return parts[parts.length - 1] || "";
 }
 
 function attachDebugger(debuggee) {

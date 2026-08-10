@@ -8,7 +8,7 @@ const shortcutsLink = document.getElementById("shortcuts-link");
 
 const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
 hotkeyCaptureEl.textContent = isMac ? "Cmd+Shift+C" : "Ctrl+Shift+C";
-hotkeyAttachEl.textContent = isMac ? "Cmd+Shift+V" : "Ctrl+Shift+V";
+hotkeyAttachEl.textContent = isMac ? "Cmd+Shift+A" : "Ctrl+Shift+A";
 
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = manifest.version;
@@ -25,9 +25,9 @@ captureBtn.addEventListener("click", async () => {
 attachBtn.addEventListener("click", async () => {
   await runAction(
     attachBtn,
-    "Attaching…",
+    "Opening file picker…",
     "attach-pdf-now",
-    "PDF attached to active chat."
+    "File picker opened — select ai_screen_capture.pdf."
   );
 });
 
