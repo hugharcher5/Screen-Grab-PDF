@@ -104,6 +104,15 @@ async function openFilePickerOnActiveChat() {
     throw new Error("Open a ChatGPT, Claude, or Gemini chat tab first.");
   }
 
+  // Gemini uses custom elements; run first in the page MAIN world.
+  if (/gemini\.google\.com/i.test(tab.url || "")) {
+    const openedInPage = await openGeminiFilePickerInMainWorld(tab.id);
+    if (openedInPage) {
+      await showToast(tab.id, "Select ai_screen_capture.pdf and press Enter");
+      return;
+    }
+  }
+
   await ensureContentScript(tab.id);
 
   const response = await chrome.tabs.sendMessage(tab.id, {
@@ -112,6 +121,153 @@ async function openFilePickerOnActiveChat() {
 
   if (!response?.ok) {
     throw new Error(response?.error || "Could not open the file picker.");
+  }
+}
+
+async function openGeminiFilePickerInMainWorld(tabId) {
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        const labelOf = (el) =>
+          [
+            el.getAttribute("aria-label") || "",
+            el.getAttribute("arialabel") || "",
+            el.getAttribute("title") || "",
+            el.textContent || ""
+          ]
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        const visible = (el) => {
+          if (!el) {
+            return false;
+          }
+          const style = window.getComputedStyle(el);
+          if (style.display === "none" || style.visibility === "hidden") {
+            return false;
+          }
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 || rect.height > 0;
+        };
+
+        const clickable = (el) => {
+          if (!el) {
+            return null;
+          }
+          if (el.tagName && el.tagName.includes("-")) {
+            return el.querySelector("button, [role='button']") || el;
+          }
+          return el;
+        };
+
+        const findInput = () => {
+          return (
+            document.querySelector("uploader-file-picker input[type='file']") ||
+            document.querySelector("images-files-uploader input[type='file']") ||
+            document.querySelector('input[type="file"]') ||
+            document.querySelectorAll('input[type="file"]')[0] ||
+            null
+          );
+        };
+
+        const findMenuButton = () => {
+          const selectors = [
+            'button[aria-label="Upload & tools"]',
+            '[aria-label="Upload & tools"]',
+            'gem-icon-button[aria-label="Upload & tools"]',
+            'gem-icon-button[arialabel="Upload & tools"]',
+            'button[aria-label="Open upload file menu"]',
+            '[aria-label="Open upload file menu"]',
+            'button[aria-label*="upload file menu" i]',
+            'button[aria-label*="Upload & tools" i]'
+          ];
+          for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el && visible(el)) {
+              return clickable(el);
+            }
+          }
+          for (const el of document.querySelectorAll(
+            "button, [role='button'], gem-icon-button, [aria-label], [arialabel]"
+          )) {
+            const label = labelOf(el);
+            if (
+              visible(el) &&
+              (/upload\s*&\s*tools/i.test(label) || /open upload file menu/i.test(label))
+            ) {
+              return clickable(el);
+            }
+          }
+          return null;
+        };
+
+        const findUploadItem = () => {
+          for (const el of document.querySelectorAll(
+            'button, [role="menuitem"], [role="button"], div[role="menuitem"]'
+          )) {
+            const label = labelOf(el);
+            if (
+              visible(el) &&
+              (/upload from computer/i.test(label) ||
+                /^files$/i.test(label) ||
+                /upload files/i.test(label))
+            ) {
+              return clickable(el);
+            }
+          }
+          return null;
+        };
+
+        return (async () => {
+          const existing = findInput();
+          if (existing) {
+            existing.click();
+            return true;
+          }
+
+          const menuButton = findMenuButton();
+          if (!menuButton) {
+            return false;
+          }
+          menuButton.click();
+
+          let uploadItem = null;
+          for (let i = 0; i < 20; i += 1) {
+            uploadItem = findUploadItem();
+            if (uploadItem) {
+              break;
+            }
+            await sleep(100);
+          }
+
+          if (uploadItem) {
+            uploadItem.click();
+            return true;
+          }
+
+          for (let i = 0; i < 10; i += 1) {
+            const input = findInput();
+            if (input) {
+              input.click();
+              return true;
+            }
+            await sleep(100);
+          }
+
+          return false;
+        })();
+      }
+    });
+
+    return Boolean(injection?.result);
+  } catch (error) {
+    console.warn("MAIN-world Gemini picker failed:", error);
+    return false;
   }
 }
 

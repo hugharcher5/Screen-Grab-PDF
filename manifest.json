@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Screen Capture to Downloads",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Save the active tab as a PDF and open the AI chat file picker to attach it.",
   "permissions": ["activeTab", "scripting", "downloads", "debugger"],
   "host_permissions": [

@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = 6;
+  const CONTENT_SCRIPT_VERSION = 7;
 
   if (globalThis.__scdContentVersion === CONTENT_SCRIPT_VERSION) {
     return;
@@ -82,36 +82,116 @@
     return false;
   }
 
+  /**
+   * Gemini does not keep a stable light-DOM file input.
+   * Flow: open "Upload & tools" menu → click "Files" / "Upload from computer"
+   * (that click opens the OS file dialog). Also try a direct input click if one exists.
+   */
   async function triggerGeminiPicker() {
-    // Click the hidden file input directly — do not click parent button wrappers
-    // (those open image/menu UI instead of the OS file dialog).
-    const input = findGeminiFileInput();
-    if (!input) {
+    const existingInput = findFileInput();
+    if (existingInput) {
+      existingInput.click();
+      return true;
+    }
+
+    const menuButton = findGeminiUploadMenuButton();
+    if (!menuButton) {
       return false;
     }
 
-    input.click();
-    return true;
+    menuButton.click();
+
+    const menuItem = await waitForElement(findGeminiUploadMenuItem, 2000);
+    if (menuItem) {
+      menuItem.click();
+
+      // Some builds create the input during the same click that opens the OS dialog.
+      const createdInput = await waitForFileInput(600, findFileInput);
+      if (createdInput) {
+        createdInput.click();
+      }
+      return true;
+    }
+
+    const inputAfterMenu = await waitForFileInput(1000, findFileInput);
+    if (inputAfterMenu) {
+      inputAfterMenu.click();
+      return true;
+    }
+
+    return false;
   }
 
-  function findGeminiFileInput() {
+  function findGeminiUploadMenuButton() {
+    const selectors = [
+      'button[aria-label="Upload & tools"]',
+      '[aria-label="Upload & tools"]',
+      'gem-icon-button[aria-label="Upload & tools"]',
+      'gem-icon-button[arialabel="Upload & tools"]',
+      'button[aria-label="Open upload file menu"]',
+      '[aria-label="Open upload file menu"]',
+      'button[aria-label*="upload file menu" i]',
+      'button[aria-label*="Upload & tools" i]',
+      'button[aria-label*="Upload files" i]',
+      'button[aria-label*="Upload" i]'
+    ];
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el && isVisible(el)) {
+        return clickableHost(el);
+      }
+    }
+
+    return findClickableByLabel([
+      /^upload\s*&\s*tools$/i,
+      /open upload file menu/i,
+      /^upload files$/i,
+      /^upload$/i
+    ]);
+  }
+
+  function findGeminiUploadMenuItem() {
+    const selectors = [
+      'button[aria-label*="Upload from computer" i]',
+      '[role="menuitem"][aria-label*="Upload from computer" i]',
+      '[role="menuitem"][aria-label*="Files" i]',
+      'button[aria-label*="Files" i]',
+      '[role="menuitem"]',
+      'button'
+    ];
+
+    for (const selector of selectors) {
+      for (const el of document.querySelectorAll(selector)) {
+        const label = getLabel(el);
+        if (
+          /upload from computer/i.test(label) ||
+          /^files$/i.test(label) ||
+          /upload files/i.test(label)
+        ) {
+          if (isVisible(el)) {
+            return clickableHost(el);
+          }
+        }
+      }
+    }
+
+    return findClickableByLabel([
+      /upload from computer/i,
+      /^files$/i,
+      /^upload files$/i
+    ]);
+  }
+
+  function findFileInput() {
     const preferred =
       document.querySelector("uploader-file-picker input[type='file']") ||
       document.querySelector("uploader-file-upload input[type='file']") ||
-      queryFileInputInShadowHosts([
-        "uploader-file-picker",
-        "uploader-file-upload",
-        "file-upload",
-        "input-container"
-      ]);
+      document.querySelector("images-files-uploader input[type='file']") ||
+      document.querySelector('input[type="file"]');
 
     if (preferred) {
       return preferred;
-    }
-
-    const single = document.querySelector('input[type="file"]');
-    if (single) {
-      return single;
     }
 
     const all = document.querySelectorAll('input[type="file"]');
@@ -122,33 +202,17 @@
     return queryDeepFileInput(document);
   }
 
-  function queryFileInputInShadowHosts(selectors) {
-    for (const selector of selectors) {
-      for (const host of document.querySelectorAll(selector)) {
-        const input =
-          host.querySelector?.('input[type="file"]') ||
-          host.shadowRoot?.querySelector('input[type="file"]') ||
-          queryDeepFileInput(host.shadowRoot || host);
-        if (input) {
-          return input;
-        }
-      }
-    }
-    return null;
-  }
-
   function queryDeepFileInput(root) {
-    if (!root) {
+    if (!root?.querySelectorAll) {
       return null;
     }
 
-    const direct = root.querySelector?.('input[type="file"]');
+    const direct = root.querySelector('input[type="file"]');
     if (direct) {
       return direct;
     }
 
-    const allElements = root.querySelectorAll?.("*") || [];
-    for (const el of allElements) {
+    for (const el of root.querySelectorAll("*")) {
       if (el.shadowRoot) {
         const nested = queryDeepFileInput(el.shadowRoot);
         if (nested) {
@@ -160,7 +224,7 @@
   }
 
   async function triggerChatGptPicker() {
-    const existingInput = document.querySelector('form input[type="file"], input[type="file"]');
+    const existingInput = findFileInput();
     if (existingInput) {
       existingInput.click();
       return true;
@@ -180,26 +244,21 @@
 
     button.click();
 
-    const input = await waitForFileInput(800, () =>
-      document.querySelector('form input[type="file"], input[type="file"]')
-    );
-
+    const input = await waitForFileInput(800, findFileInput);
     if (input) {
       input.click();
       return true;
     }
 
-    // Menu opened; try a nested "Upload"/"Attach from computer" item.
-    const menuItem = queryFirst([
-      '[role="menuitem"] button[aria-label*="Upload" i]',
-      '[role="menuitem"][aria-label*="Upload" i]',
-      '[role="menuitem"][aria-label*="Attach" i]',
-      'button[aria-label*="Upload from computer" i]',
-      'div[role="menuitem"]'
+    const menuItem = findClickableByLabel([
+      /upload from computer/i,
+      /add photos & files/i,
+      /upload/i,
+      /attach/i
     ]);
-    if (menuItem && /upload|attach|file|computer/i.test(menuItem.textContent || menuItem.getAttribute("aria-label") || "")) {
+    if (menuItem) {
       menuItem.click();
-      const nestedInput = await waitForFileInput(800, () => document.querySelector('input[type="file"]'));
+      const nestedInput = await waitForFileInput(800, findFileInput);
       if (nestedInput) {
         nestedInput.click();
       }
@@ -220,7 +279,7 @@
       button.click();
     }
 
-    const input = await waitForFileInput(800, () => document.querySelector('input[type="file"]'));
+    const input = await waitForFileInput(800, findFileInput);
     if (input) {
       input.click();
       return true;
@@ -233,13 +292,67 @@
     for (const selector of selectors) {
       const el = document.querySelector(selector);
       if (el) {
-        return el;
+        return clickableHost(el);
       }
     }
     return null;
   }
 
-  function waitForFileInput(timeoutMs, finder) {
+  function findClickableByLabel(patterns) {
+    const candidates = document.querySelectorAll(
+      'button, [role="button"], [role="menuitem"], gem-icon-button, [aria-label], [arialabel]'
+    );
+
+    for (const el of candidates) {
+      const label = getLabel(el);
+      if (!label || !isVisible(el)) {
+        continue;
+      }
+      if (patterns.some((pattern) => pattern.test(label))) {
+        return clickableHost(el);
+      }
+    }
+    return null;
+  }
+
+  function getLabel(el) {
+    return [
+      el.getAttribute("aria-label") || "",
+      el.getAttribute("arialabel") || "",
+      el.getAttribute("title") || "",
+      el.textContent || ""
+    ]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function clickableHost(el) {
+    if (!el) {
+      return null;
+    }
+    if (el.tagName && el.tagName.includes("-")) {
+      const nested = el.querySelector?.("button, [role='button']");
+      if (nested) {
+        return nested;
+      }
+    }
+    return el;
+  }
+
+  function isVisible(el) {
+    if (!el) {
+      return false;
+    }
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0 || el.getAttribute("aria-hidden") === "false";
+  }
+
+  function waitForElement(finder, timeoutMs) {
     const existing = finder();
     if (existing) {
       return Promise.resolve(existing);
@@ -247,11 +360,11 @@
 
     return new Promise((resolve) => {
       const observer = new MutationObserver(() => {
-        const input = finder();
-        if (input) {
+        const el = finder();
+        if (el) {
           observer.disconnect();
           clearTimeout(timer);
-          resolve(input);
+          resolve(el);
         }
       });
 
@@ -265,6 +378,10 @@
         resolve(finder());
       }, timeoutMs);
     });
+  }
+
+  function waitForFileInput(timeoutMs, finder) {
+    return waitForElement(finder, timeoutMs);
   }
 
   function showToast(message) {
