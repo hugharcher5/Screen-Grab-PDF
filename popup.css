@@ -46,17 +46,7 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.section h2 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 .hotkey {
-  margin: 0;
   display: inline-block;
   padding: 2px 7px;
   border: 1px solid var(--line);
@@ -65,34 +55,14 @@ body {
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
+  color: var(--ink);
 }
 
-.steps {
+.hint {
   margin: 0;
-  padding-left: 18px;
   font-size: 12px;
   line-height: 1.55;
   color: var(--muted);
-}
-
-.steps li {
-  margin: 0 0 8px;
-}
-
-.steps li:last-child {
-  margin-bottom: 0;
-}
-
-.button-secondary {
-  margin-top: 8px;
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-}
-
-.button-secondary:hover {
-  filter: none;
-  background: rgba(15, 106, 86, 0.08);
 }
 
 .link {

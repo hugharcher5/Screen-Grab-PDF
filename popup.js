@@ -1,14 +1,11 @@
 const captureBtn = document.getElementById("capture-btn");
-const attachBtn = document.getElementById("attach-btn");
 const statusEl = document.getElementById("status");
-const hotkeyCaptureEl = document.getElementById("hotkey-capture");
-const hotkeyAttachEl = document.getElementById("hotkey-attach");
+const hotkeyEl = document.getElementById("hotkey");
 const versionEl = document.getElementById("version");
 const shortcutsLink = document.getElementById("shortcuts-link");
 
 const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent);
-hotkeyCaptureEl.textContent = isMac ? "Cmd+Shift+C" : "Ctrl+Shift+C";
-hotkeyAttachEl.textContent = isMac ? "Cmd+Shift+A" : "Ctrl+Shift+A";
+hotkeyEl.textContent = isMac ? "Cmd+Shift+C" : "Ctrl+Shift+C";
 
 const manifest = chrome.runtime.getManifest();
 versionEl.textContent = manifest.version;
@@ -19,37 +16,21 @@ shortcutsLink.addEventListener("click", (event) => {
 });
 
 captureBtn.addEventListener("click", async () => {
-  await runAction(captureBtn, "Capturing…", "capture-pdf-now", "PDF saved to Downloads.");
-});
-
-attachBtn.addEventListener("click", async () => {
-  setStatus(
-    "Focus the ChatGPT/Claude/Gemini tab and press " +
-      (isMac ? "Cmd+Shift+A" : "Ctrl+Shift+A") +
-      " (required for the OS file dialog).",
-    "err"
-  );
-});
-
-async function runAction(button, pendingText, messageType, successText) {
-  setStatus(pendingText);
+  setStatus("Capturing…");
   captureBtn.disabled = true;
-  attachBtn.disabled = true;
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: messageType });
+    const response = await chrome.runtime.sendMessage({ type: "capture-pdf-now" });
     if (!response?.ok) {
-      throw new Error(response?.error || "Action failed.");
+      throw new Error(response?.error || "Capture failed.");
     }
-    setStatus(successText, "ok");
+    setStatus("PDF saved to Downloads.", "ok");
   } catch (error) {
     setStatus(error?.message || String(error), "err");
   } finally {
     captureBtn.disabled = false;
-    attachBtn.disabled = false;
-    void button;
   }
-}
+});
 
 function setStatus(text, kind) {
   statusEl.textContent = text;
