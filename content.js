@@ -1,5 +1,5 @@
 (() => {
-  const CONTENT_SCRIPT_VERSION = 7;
+  const CONTENT_SCRIPT_VERSION = 8;
 
   if (globalThis.__scdContentVersion === CONTENT_SCRIPT_VERSION) {
     return;
@@ -11,16 +11,15 @@
   if (globalThis.__scdKeydownGuard) {
     document.removeEventListener("keydown", globalThis.__scdKeydownGuard, true);
   }
-  if (globalThis.__scdPasteGuard) {
-    document.removeEventListener("paste", globalThis.__scdPasteGuard, true);
-  }
 
   globalThis.__scdContentVersion = CONTENT_SCRIPT_VERSION;
   globalThis.__scdOnMessage = handleMessage;
-  globalThis.__scdKeydownGuard = null;
-  globalThis.__scdPasteGuard = null;
+  globalThis.__scdKeydownGuard = handleAttachHotkey;
 
   chrome.runtime.onMessage.addListener(handleMessage);
+  // Must handle the hotkey in-page so Chrome treats it as a real user gesture.
+  // chrome.commands steals the key and breaks input[type=file].click().
+  document.addEventListener("keydown", handleAttachHotkey, true);
 
   function handleMessage(message, _sender, sendResponse) {
     if (message?.type === "ping") {
@@ -29,7 +28,7 @@
     }
 
     if (message?.type === "open-file-picker") {
-      openNativeFilePicker()
+      openNativeFilePicker({ fromUserGesture: false })
         .then((result) => sendResponse({ ok: true, ...result }))
         .catch((error) => {
           sendResponse({ ok: false, error: error?.message || String(error) });
@@ -40,15 +39,39 @@
     return false;
   }
 
-  async function openNativeFilePicker() {
+  function handleAttachHotkey(event) {
+    if (!isAttachHotkey(event) || !detectPlatform()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    openNativeFilePicker({ fromUserGesture: true }).catch((error) => {
+      console.error("File picker open failed:", error);
+      showToast(error?.message || "Could not open the file picker.");
+    });
+  }
+
+  function isAttachHotkey(event) {
+    const key = event.key || "";
+    const code = event.code || "";
+    const isA = key === "a" || key === "A" || code === "KeyA";
+    return Boolean(isA && event.shiftKey && (event.ctrlKey || event.metaKey));
+  }
+
+  async function openNativeFilePicker({ fromUserGesture }) {
     const platform = detectPlatform();
     if (!platform) {
       throw new Error("Unsupported page. Use ChatGPT, Claude, or Gemini.");
     }
 
-    const opened = await triggerSiteFilePicker(platform);
+    const opened = await triggerSiteFilePicker(platform, fromUserGesture);
     if (!opened) {
-      throw new Error("Could not open the file picker on this chat page.");
+      throw new Error(
+        "Could not open the file picker. Click the + / Upload button once, then try Ctrl+Shift+A again."
+      );
     }
 
     showToast("Select ai_screen_capture.pdf and press Enter");
@@ -69,9 +92,9 @@
     return null;
   }
 
-  async function triggerSiteFilePicker(platform) {
+  async function triggerSiteFilePicker(platform, fromUserGesture) {
     if (platform === "gemini") {
-      return triggerGeminiPicker();
+      return triggerGeminiPicker(fromUserGesture);
     }
     if (platform === "chatgpt") {
       return triggerChatGptPicker();
@@ -83,11 +106,10 @@
   }
 
   /**
-   * Gemini does not keep a stable light-DOM file input.
-   * Flow: open "Upload & tools" menu → click "Files" / "Upload from computer"
-   * (that click opens the OS file dialog). Also try a direct input click if one exists.
+   * Gemini: file input is created only after Upload & tools → Files.
+   * The first clicks must happen inside a user-gesture turn (keydown).
    */
-  async function triggerGeminiPicker() {
+  async function triggerGeminiPicker(fromUserGesture) {
     const existingInput = findFileInput();
     if (existingInput) {
       existingInput.click();
@@ -96,30 +118,29 @@
 
     const menuButton = findGeminiUploadMenuButton();
     if (!menuButton) {
+      console.warn("[SCD] Gemini upload menu button not found");
       return false;
     }
 
+    // Synchronous click while user activation is alive.
     menuButton.click();
 
-    const menuItem = await waitForElement(findGeminiUploadMenuItem, 2000);
-    if (menuItem) {
-      menuItem.click();
-
-      // Some builds create the input during the same click that opens the OS dialog.
-      const createdInput = await waitForFileInput(600, findFileInput);
-      if (createdInput) {
-        createdInput.click();
-      }
+    const uploadItem = await waitForElement(findGeminiUploadMenuItem, fromUserGesture ? 1500 : 2500);
+    if (uploadItem) {
+      uploadItem.click();
       return true;
     }
 
-    const inputAfterMenu = await waitForFileInput(1000, findFileInput);
+    const inputAfterMenu = await waitForElement(findFileInput, 800);
     if (inputAfterMenu) {
       inputAfterMenu.click();
       return true;
     }
 
-    return false;
+    console.warn("[SCD] Gemini upload menu opened but Files item not found");
+    // Menu is open — still useful; user can click Files manually.
+    showToast("Click “Files” / “Upload from computer” in the menu");
+    return true;
   }
 
   function findGeminiUploadMenuButton() {
@@ -130,57 +151,68 @@
       'gem-icon-button[arialabel="Upload & tools"]',
       'button[aria-label="Open upload file menu"]',
       '[aria-label="Open upload file menu"]',
-      'button[aria-label*="upload file menu" i]',
       'button[aria-label*="Upload & tools" i]',
+      'button[aria-label*="upload file menu" i]',
       'button[aria-label*="Upload files" i]',
-      'button[aria-label*="Upload" i]'
+      'button[aria-label*="Open upload" i]',
+      'button[aria-label="+"]',
+      'button[aria-label="Plus"]',
+      '[data-test-id="upload-menu-button"]',
+      '[data-test-id="uploader-button"]'
     ];
 
     for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (el && isVisible(el)) {
+      try {
+        const el = document.querySelector(selector);
+        if (el) {
+          return clickableHost(el);
+        }
+      } catch (_error) {
+        // Invalid selector in older engines — ignore.
+      }
+    }
+
+    return (
+      findClickableByLabel([
+        /upload\s*&\s*tools/i,
+        /open upload file menu/i,
+        /^upload files$/i,
+        /^upload$/i
+      ]) || findPlusLikeComposerButton()
+    );
+  }
+
+  function findPlusLikeComposerButton() {
+    const composer =
+      document.querySelector("input-container, .input-area, rich-textarea, .text-input-field") ||
+      document.querySelector("main") ||
+      document.body;
+
+    const buttons = composer.querySelectorAll("button, [role='button'], gem-icon-button");
+    for (const el of buttons) {
+      const label = getLabel(el);
+      if (/upload|attach|add file|tools|\+/i.test(label)) {
         return clickableHost(el);
       }
     }
-
-    return findClickableByLabel([
-      /^upload\s*&\s*tools$/i,
-      /open upload file menu/i,
-      /^upload files$/i,
-      /^upload$/i
-    ]);
+    return null;
   }
 
   function findGeminiUploadMenuItem() {
-    const selectors = [
-      'button[aria-label*="Upload from computer" i]',
-      '[role="menuitem"][aria-label*="Upload from computer" i]',
-      '[role="menuitem"][aria-label*="Files" i]',
-      'button[aria-label*="Files" i]',
-      '[role="menuitem"]',
-      'button'
-    ];
-
-    for (const selector of selectors) {
-      for (const el of document.querySelectorAll(selector)) {
-        const label = getLabel(el);
-        if (
-          /upload from computer/i.test(label) ||
-          /^files$/i.test(label) ||
-          /upload files/i.test(label)
-        ) {
-          if (isVisible(el)) {
-            return clickableHost(el);
-          }
-        }
+    for (const el of document.querySelectorAll(
+      'button, [role="menuitem"], [role="button"], div[role="menuitem"], span[role="menuitem"]'
+    )) {
+      const label = getLabel(el);
+      if (
+        /upload from computer/i.test(label) ||
+        /upload files/i.test(label) ||
+        /^files$/i.test(label) ||
+        /^file$/i.test(label)
+      ) {
+        return clickableHost(el);
       }
     }
-
-    return findClickableByLabel([
-      /upload from computer/i,
-      /^files$/i,
-      /^upload files$/i
-    ]);
+    return null;
   }
 
   function findFileInput() {
@@ -230,13 +262,14 @@
       return true;
     }
 
-    const button = queryFirst([
-      'button[aria-label*="Attach" i]',
-      'button[aria-label*="Upload" i]',
-      'button[aria-label*="Add photos & files" i]',
-      'button[aria-label*="Add files" i]',
-      'button[data-testid="composer-plus-btn"]'
-    ]);
+    const button =
+      queryFirst([
+        'button[aria-label*="Attach" i]',
+        'button[aria-label*="Upload" i]',
+        'button[aria-label*="Add photos & files" i]',
+        'button[aria-label*="Add files" i]',
+        'button[data-testid="composer-plus-btn"]'
+      ]) || findClickableByLabel([/attach/i, /upload/i, /add photos & files/i]);
 
     if (!button) {
       return false;
@@ -244,7 +277,7 @@
 
     button.click();
 
-    const input = await waitForFileInput(800, findFileInput);
+    const input = await waitForElement(findFileInput, 800);
     if (input) {
       input.click();
       return true;
@@ -258,7 +291,7 @@
     ]);
     if (menuItem) {
       menuItem.click();
-      const nestedInput = await waitForFileInput(800, findFileInput);
+      const nestedInput = await waitForElement(findFileInput, 800);
       if (nestedInput) {
         nestedInput.click();
       }
@@ -269,17 +302,18 @@
   }
 
   async function triggerClaudePicker() {
-    const button = queryFirst([
-      'button[aria-label*="Attach" i]',
-      'button[aria-label*="Upload" i]',
-      'button[aria-label*="Add files" i]'
-    ]);
+    const button =
+      queryFirst([
+        'button[aria-label*="Attach" i]',
+        'button[aria-label*="Upload" i]',
+        'button[aria-label*="Add files" i]'
+      ]) || findClickableByLabel([/attach/i, /upload/i]);
 
     if (button) {
       button.click();
     }
 
-    const input = await waitForFileInput(800, findFileInput);
+    const input = await waitForElement(findFileInput, 800);
     if (input) {
       input.click();
       return true;
@@ -290,9 +324,13 @@
 
   function queryFirst(selectors) {
     for (const selector of selectors) {
-      const el = document.querySelector(selector);
-      if (el) {
-        return clickableHost(el);
+      try {
+        const el = document.querySelector(selector);
+        if (el) {
+          return clickableHost(el);
+        }
+      } catch (_error) {
+        // Ignore unsupported selector syntax.
       }
     }
     return null;
@@ -305,7 +343,7 @@
 
     for (const el of candidates) {
       const label = getLabel(el);
-      if (!label || !isVisible(el)) {
+      if (!label) {
         continue;
       }
       if (patterns.some((pattern) => pattern.test(label))) {
@@ -332,24 +370,9 @@
       return null;
     }
     if (el.tagName && el.tagName.includes("-")) {
-      const nested = el.querySelector?.("button, [role='button']");
-      if (nested) {
-        return nested;
-      }
+      return el.querySelector("button, [role='button']") || el;
     }
     return el;
-  }
-
-  function isVisible(el) {
-    if (!el) {
-      return false;
-    }
-    const style = window.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden") {
-      return false;
-    }
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 || rect.height > 0 || el.getAttribute("aria-hidden") === "false";
   }
 
   function waitForElement(finder, timeoutMs) {
@@ -378,10 +401,6 @@
         resolve(finder());
       }, timeoutMs);
     });
-  }
-
-  function waitForFileInput(timeoutMs, finder) {
-    return waitForElement(finder, timeoutMs);
   }
 
   function showToast(message) {
@@ -422,6 +441,6 @@
       toast.style.opacity = "0";
       toast.style.transform = "translateY(-6px)";
       setTimeout(() => toast.remove(), 220);
-    }, 2000);
+    }, 2500);
   }
 })();

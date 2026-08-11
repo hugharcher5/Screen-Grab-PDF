@@ -23,11 +23,11 @@ captureBtn.addEventListener("click", async () => {
 });
 
 attachBtn.addEventListener("click", async () => {
-  await runAction(
-    attachBtn,
-    "Opening file picker…",
-    "attach-pdf-now",
-    "File picker opened — select ai_screen_capture.pdf."
+  setStatus(
+    "Focus the ChatGPT/Claude/Gemini tab and press " +
+      (isMac ? "Cmd+Shift+A" : "Ctrl+Shift+A") +
+      " (required for the OS file dialog).",
+    "err"
   );
 });
 

@@ -20,14 +20,14 @@ Lightweight Manifest V3 Chrome extension that:
 4. Select this project folder (the one that contains `manifest.json`).
 5. Confirm **Screen Capture to Downloads** appears in your extensions list.
 6. If you already had it loaded, click **Reload** after updates.
-7. If the attach shortcut still shows the old key, rebind it at `chrome://extensions/shortcuts`.
+7. Hard-refresh any open ChatGPT / Claude / Gemini tabs after reloading the extension.
 
 ## Complete workflow
 
 1. Open any normal webpage (`http://` or `https://`).
 2. Press **`Ctrl+Shift+C`** (or **`Cmd+Shift+C`** on Mac) to save the page as `ai_screen_capture.pdf` in Downloads.
 3. Switch to your **ChatGPT** (`chatgpt.com`), **Claude** (`claude.ai`), or **Gemini** (`gemini.google.com`) tab.
-4. Press **`Ctrl+Shift+A`** (or **`Cmd+Shift+A`** on Mac) to open the native file selection dialog.
+4. Press **`Ctrl+Shift+A`** (or **`Cmd+Shift+A`** on Mac) **while focused on that chat page** to open the native file selection dialog.
 5. Choose **`ai_screen_capture.pdf`** (often already focused in Downloads) and press **Enter**.
 
 ## How it works
@@ -40,9 +40,12 @@ Lightweight Manifest V3 Chrome extension that:
 
 ### Attach / file picker (`Ctrl+Shift+A`)
 
-1. Background checks the active tab is ChatGPT, Claude, or Gemini.
-2. Content script clicks that site’s Upload/Attach control (or the hidden `input[type="file"]`).
-3. The OS file dialog opens — no DOM image scraping, no clipboard paste, no auto-attaching chat images.
+1. The shortcut is handled **in the page content script** (not via `chrome.commands`), so Chrome still treats it as a real user gesture — required to open `input[type=file]` dialogs.
+2. On Gemini it clicks **Upload & tools**, then **Files** / **Upload from computer**.
+3. On ChatGPT / Claude it clicks Attach/Upload or the hidden file input.
+4. The OS file dialog opens — no DOM image scraping and no clipboard paste.
+
+**Important:** Remove any old **Attach** shortcut at `chrome://extensions/shortcuts` if it still lists `Ctrl+Shift+A` for this extension. That old command binding steals the key and prevents the file dialog from opening.
 
 ## Project files
 
