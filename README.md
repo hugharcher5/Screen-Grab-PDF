@@ -52,6 +52,8 @@ Download the ZIP again, replace your old folder with the new one, then go to `ch
 
 Each capture **overwrites** the previous `ai_screen_capture.pdf` so Downloads does not fill with duplicates.
 
+**Check the PDF before you rely on it.** Some websites print badly, for example with missing images, cut-off text or odd layouts, because the page is saved the way Chrome would print it.
+
 ## Change the shortcut
 
 1. Open the extension popup and click **Change shortcut in Chrome…**, or visit `chrome://extensions/shortcuts`.
