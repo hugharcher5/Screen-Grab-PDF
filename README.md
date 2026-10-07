@@ -2,7 +2,7 @@
 
 Lightweight Manifest V3 Chrome extension that saves the **active browser tab** as a PDF (`ai_screen_capture.pdf`) directly to your **Downloads** folder, with no print preview and no extra windows.
 
-Press **`Ctrl+Shift+C`** on any webpage (or **`Cmd+Shift+C`** on Mac) to instantly convert and save it as a PDF.
+Once installed and given a keyboard shortcut (step 3 below), press it on any webpage to instantly save the page as a PDF.
 
 ## Install it (about 2 minutes)
 
@@ -26,6 +26,18 @@ You don't need to know how to code, and you only do this once.
 
 Chrome may occasionally show a message about extensions in developer mode. That's normal for extensions installed this way, and you can close it.
 
+### Step 3: Set your keyboard shortcut
+
+Chrome often leaves the shortcut switched off after installing, so do this once.
+
+1. Type `chrome://extensions/shortcuts` into the address bar and press **Enter**. (Or click the extension's button and choose **Change shortcut in Chrome**.)
+2. Find **Screen Capture to Downloads**.
+3. Next to **Save active tab as PDF directly to Downloads**, click the **pencil** icon.
+4. Press the keys you want to use, for example **Ctrl+Shift+C** on Windows or **Cmd+Shift+C** on a Mac. The box should now show your shortcut instead of "Not set".
+5. Leave **Scope** on **In Chrome**.
+
+If your shortcut doesn't work, Chrome or another extension is probably already using it. Pick a different one, such as **Ctrl+Shift+Y**, and try again. You can ignore the "Activate the extension" row.
+
 ### Updating to a newer version
 
 Download the ZIP again, replace your old folder with the new one, then go to `chrome://extensions` and click the circular **Reload** arrow on the extension's card.
@@ -33,7 +45,7 @@ Download the ZIP again, replace your old folder with the new one, then go to `ch
 ## How to use
 
 1. Open a normal website tab (`http://` or `https://`).
-2. Press **`Ctrl+Shift+C`** (Windows/Linux) or **`Cmd+Shift+C`** (Mac), **or** open the extension popup and click **Capture Page as PDF Now**.
+2. Press the shortcut you set in step 3, **or** click the extension's button and choose **Capture Page as PDF Now**.
 3. Chrome may briefly show a "debugging this browser" banner. That's expected while the PDF is generated.
 4. A toast appears: **PDF Saved to Downloads!**
 5. Check your Downloads folder for `ai_screen_capture.pdf`.
