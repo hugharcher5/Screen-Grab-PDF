@@ -1,23 +1,40 @@
 # Screen Capture to Downloads
 
-Lightweight Manifest V3 Chrome extension that saves the **active browser tab** as a PDF (`ai_screen_capture.pdf`) directly to your **Downloads** folder — no print preview, no extra windows.
+Lightweight Manifest V3 Chrome extension that saves the **active browser tab** as a PDF (`ai_screen_capture.pdf`) directly to your **Downloads** folder, with no print preview and no extra windows.
 
 Press **`Ctrl+Shift+C`** on any webpage (or **`Cmd+Shift+C`** on Mac) to instantly convert and save it as a PDF.
 
-## Load the extension in Chrome
+## Install it (about 2 minutes)
 
-1. Open Chrome and go to `chrome://extensions`.
-2. Turn on **Developer mode** (top-right toggle).
-3. Click **Load unpacked**.
-4. Select this project folder (the one that contains `manifest.json`).
-5. Confirm **Screen Capture to Downloads** appears in your extensions list.
-6. If you already had it loaded, click **Reload** after updates.
+You don't need to know how to code, and you only do this once.
+
+### Step 1: Download it
+
+1. On this page, click the green **Code** button near the top, then click **Download ZIP**.
+2. Open your **Downloads** folder and find `Screen-Grab-PDF-main.zip`.
+3. Unzip it. On Windows, right-click the file and choose **Extract All**, then **Extract**. On a Mac, double-click it. You now have a folder called `Screen-Grab-PDF-main`.
+4. Move that folder somewhere you won't delete it by accident, such as **Documents**. Chrome runs the extension from this folder, so if the folder is deleted, the extension stops working.
+
+### Step 2: Add it to Chrome
+
+1. Open Chrome, type `chrome://extensions` into the address bar and press **Enter**.
+2. Turn on **Developer mode** using the switch in the top right corner.
+3. Click **Load unpacked** in the top left.
+4. Select the `Screen-Grab-PDF-main` folder and click **Select Folder**. If you see a second folder with the same name inside it, open that one and select it instead. The right folder contains a file called `manifest.json`.
+5. **Screen Capture to Downloads** now appears in your list of extensions. You're done.
+6. Optional: click the puzzle piece icon to the right of the address bar and click the pin next to the extension, so its button is always visible.
+
+Chrome may occasionally show a message about extensions in developer mode. That's normal for extensions installed this way, and you can close it.
+
+### Updating to a newer version
+
+Download the ZIP again, replace your old folder with the new one, then go to `chrome://extensions` and click the circular **Reload** arrow on the extension's card.
 
 ## How to use
 
 1. Open a normal website tab (`http://` or `https://`).
 2. Press **`Ctrl+Shift+C`** (Windows/Linux) or **`Cmd+Shift+C`** (Mac), **or** open the extension popup and click **Capture Page as PDF Now**.
-3. Chrome may briefly show a “debugging this browser” banner — expected while the PDF is generated.
+3. Chrome may briefly show a "debugging this browser" banner. That's expected while the PDF is generated.
 4. A toast appears: **PDF Saved to Downloads!**
 5. Check your Downloads folder for `ai_screen_capture.pdf`.
 
